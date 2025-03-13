@@ -1,14 +1,24 @@
 import { NextResponse } from "next/server";
-import { chromium, type PageScreenshotOptions } from "playwright";
+import { chromium, type PageScreenshotOptions, type Page } from "playwright";
 import GIFEncoder from "gif-encoder-2";
 import { createCanvas, Image } from "canvas";
 import { uploadToImgBB } from "@/lib/upload-image";
+
+interface GifOptions {
+  frameCount: number;
+  frameDelay: number;
+  quality: number;
+  captureInterval: number;
+}
 
 interface RequestBody {
   url: string;
   divId?: string;
   imageFormat: "png" | "jpeg" | "gif";
   captureDelay?: number;
+  navigationTimeout?: number;
+  maxRetries?: number;
+  gifOptions?: Partial<GifOptions>;
 }
 
 interface TimingInfo {
@@ -22,38 +32,43 @@ interface PlaywrightError extends Error {
   name: string;
 }
 
-async function createGif(frames: Buffer[]): Promise<Buffer> {
+async function createGif(frames: Buffer[], quality = 25): Promise<Buffer> {
   return new Promise(async (resolve, reject) => {
     try {
       const firstImage = new Image();
       firstImage.onload = async () => {
-        const width = firstImage.width;
-        const height = firstImage.height;
+        let width = firstImage.width;
+        let height = firstImage.height;
+        const maxDimension = 1200;
+
+        if (width > maxDimension || height > maxDimension) {
+          const ratio = Math.min(maxDimension / width, maxDimension / height);
+          width = Math.floor(width * ratio);
+          height = Math.floor(height * ratio);
+        }
 
         const canvas = createCanvas(width, height);
         const ctx = canvas.getContext("2d");
-        const encoder = new GIFEncoder(width, height);
+        const encoder = new GIFEncoder(width, height, "neuquant", true);
 
         encoder.setDelay(200);
-        encoder.setQuality(50);
+        encoder.setQuality(quality);
         encoder.setRepeat(0);
         encoder.start();
 
-        await Promise.all(
-          frames.map(async (frameBuffer) => {
-            return new Promise<void>((resolveFrame) => {
-              const image = new Image();
-              image.onload = () => {
-                ctx.clearRect(0, 0, width, height);
-                ctx.drawImage(image, 0, 0);
-                const imageData = ctx.getImageData(0, 0, width, height);
-                encoder.addFrame(imageData.data);
-                resolveFrame();
-              };
-              image.src = frameBuffer;
-            });
-          })
-        );
+        for (const frameBuffer of frames) {
+          await new Promise<void>((resolveFrame) => {
+            const image = new Image();
+            image.onload = () => {
+              ctx.clearRect(0, 0, width, height);
+              ctx.drawImage(image, 0, 0, width, height);
+              const imageData = ctx.getImageData(0, 0, width, height);
+              encoder.addFrame(imageData.data);
+              resolveFrame();
+            };
+            image.src = frameBuffer;
+          });
+        }
 
         encoder.finish();
         resolve(encoder.out.getData());
@@ -66,23 +81,89 @@ async function createGif(frames: Buffer[]): Promise<Buffer> {
   });
 }
 
+async function navigateWithRetry({
+  page,
+  url,
+  maxRetries = 3,
+  navigationTimeout = 60000,
+}: {
+  page: Page;
+  url: string;
+  maxRetries?: number;
+  navigationTimeout?: number;
+}) {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await page.goto(url, {
+        waitUntil: "networkidle",
+        timeout: navigationTimeout,
+      });
+      return;
+    } catch (error) {
+      lastError = error as Error;
+      console.warn(`Navigation attempt ${attempt} failed:`, error);
+      if (attempt < maxRetries) {
+        // Wait before retrying (exponential backoff)
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.pow(2, attempt) * 1000)
+        );
+      }
+    }
+  }
+
+  throw new Error(
+    `Failed to load page after ${maxRetries} attempts. Last error: ${lastError?.message}`
+  );
+}
+
 export async function POST(request: Request) {
   try {
     const startTime = Date.now();
     const body: RequestBody = await request.json();
-    const { url, divId, imageFormat = "png", captureDelay = 1000 } = body;
+
+    const defaultGifOptions: GifOptions = {
+      frameCount: 4,
+      frameDelay: 200,
+      quality: 10,
+      captureInterval: 100,
+    };
+
+    const {
+      url,
+      divId,
+      imageFormat = "png",
+      captureDelay = 1000,
+      navigationTimeout = 60000,
+      maxRetries = 3,
+      gifOptions: userGifOptions = {},
+    } = body;
+
+    const gifOptions: GifOptions = {
+      ...defaultGifOptions,
+      ...userGifOptions,
+    };
 
     if (!url) {
       return NextResponse.json({ error: "URL is required" }, { status: 400 });
     }
 
     const browser = await chromium.launch();
-    const context = await browser.newContext();
+    const context = await browser.newContext({
+      viewport: { width: 1920, height: 1080 },
+    });
     const page = await context.newPage();
 
     try {
-      await page.goto(url, { waitUntil: "networkidle" });
-      await page.waitForTimeout(captureDelay); // Wait for dynamic content
+      await navigateWithRetry({
+        page,
+        url,
+        maxRetries,
+        navigationTimeout,
+      });
+
+      await page.waitForTimeout(captureDelay);
 
       let screenshotBuffer: Buffer;
       const timing: TimingInfo = {
@@ -107,20 +188,26 @@ export async function POST(request: Request) {
           }
           await element.waitForElementState("visible");
           await element.scrollIntoViewIfNeeded();
-          await page.waitForTimeout(500);
+          await page.waitForTimeout(200); // Reduced from 500ms
         }
 
-        for (let i = 0; i < 6; i++) {
+        for (let i = 0; i < gifOptions.frameCount; i++) {
           const frame = (await (divId && element
             ? element.screenshot({ type: "png" })
-            : page.screenshot({ type: "png", fullPage: true }))) as Buffer;
+            : page.screenshot({
+                type: "png",
+                fullPage: true,
+                scale: "device",
+              }))) as Buffer;
           frames.push(frame);
-          await page.waitForTimeout(200);
+          if (i < gifOptions.frameCount - 1) {
+            await page.waitForTimeout(gifOptions.captureInterval);
+          }
         }
         timing.captureTime = Date.now() - captureStartTime;
 
         const processingStartTime = Date.now();
-        screenshotBuffer = await createGif(frames);
+        screenshotBuffer = await createGif(frames, gifOptions.quality);
         timing.processingTime = Date.now() - processingStartTime;
       } else {
         const captureStartTime = Date.now();
