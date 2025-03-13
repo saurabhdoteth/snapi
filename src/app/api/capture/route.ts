@@ -149,7 +149,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "URL is required" }, { status: 400 });
     }
 
-    const browser = await chromium.launch();
+    const browser = await chromium.launch({
+      chromiumSandbox: false,
+      executablePath: process.env.CHROMIUM_PATH || undefined,
+    });
     const context = await browser.newContext({
       viewport: { width: 1920, height: 1080 },
     });
