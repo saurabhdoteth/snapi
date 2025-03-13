@@ -1,0 +1,18 @@
+{
+    "buildCommand": "pnpm run build",
+    "installCommand": "pnpm install",
+    "framework": "nextjs",
+    "buildEnvironment": {
+        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1"
+    },
+    "functions": {
+        "app/api/capture/route.ts": {
+            "memory": 3008,
+            "maxDuration": 60
+        }
+    },
+    "env": {
+        "PLAYWRIGHT_BROWSERS_PATH": "0",
+        "CHROMIUM_PATH": "/usr/bin/chromium"
+    }
+}
