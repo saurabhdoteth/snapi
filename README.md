@@ -1,6 +1,6 @@
-# Website Screenshot App
+# Snapi
 
-A modern Next.js 14 application that captures high-quality screenshots of websites using Playwright.
+App that captures high-quality screenshots of websites using Playwright.
 
 ## Features
 
@@ -87,58 +87,6 @@ pnpm lint
 
 # Run tests
 pnpm test
-```
-
-## Testing
-
-The project uses Playwright for end-to-end testing:
-
-```bash
-# Run e2e tests
-pnpm test:e2e
-
-# Run e2e tests with UI
-pnpm test:e2e:ui
-
-# Generate test report
-pnpm test:report
-```
-
-## Deployment
-
-The application can be deployed to any platform that supports Next.js applications (Vercel, Railway, etc.).
-
-1. Build the application:
-```bash
-pnpm build
-```
-
-2. Start the production server:
-```bash
-pnpm start
-```
-
-### Deploying to Vercel
-
-The easiest way to deploy is using Vercel:
-
-1. Push your code to a Git repository
-2. Import the project in Vercel
-3. Configure environment variables
-4. Deploy
-
-## Project Structure
-
-```
-website-screenshot-app/
-├── app/                    # Next.js app directory
-│   ├── api/               # API routes
-│   ├── components/        # React components
-│   └── lib/               # Utility functions
-├── public/                # Static files
-├── tests/                 # E2E tests
-├── types/                 # TypeScript types
-└── playwright.config.ts   # Playwright configuration
 ```
 
 ## Contributing
